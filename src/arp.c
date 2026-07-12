@@ -1,0 +1,106 @@
+#include <linux/if_arp.h>
+#include <linux/if_ether.h>
+#include <netinet/in.h>
+#include <stdio.h>
+#include <stdint.h>
+#include <string.h>
+#include <arpa/inet.h>
+
+#include "tun.h"
+#include "arp.h"
+
+
+// #define ETH_P_IP 0x0800    // IP报文
+// #define ETH_P_ARP 0x0806   // ARP报文
+#define ARP_ETHERNET 1     
+
+#define ARP_REQUEST 1
+#define ARP_REPLY   2
+
+// 以太网帧头结构
+typedef struct{
+    unsigned char dst[ETH_ALEN];
+    unsigned char src[ETH_ALEN];
+    uint16_t type;  
+}__attribute__((packed)) eth_hdr;
+
+// ARP报文结构
+typedef struct{
+    uint16_t hwtype;
+    uint16_t protype;
+    unsigned char hwsize;
+    unsigned char prosize;
+    uint16_t opcode;
+    unsigned char smac[ETH_ALEN];
+    uint32_t sip;
+    unsigned char tmac[ETH_ALEN];
+    uint32_t tip;
+}__attribute__((packed)) arp_hdr;
+
+// ARP数据包结构
+typedef struct{
+    eth_hdr eth;
+    arp_hdr arp;
+}__attribute__((packed)) arp_pkt;
+
+static int arp_initial = 0;
+static uint32_t local_ip;
+static unsigned char local_mac[6] = {
+    0x02, 0x00, 0x00, 0x00, 0x00, 0x02
+};
+
+int arp_init(){
+    if(arp_initial) return 0;
+    if(inet_pton(AF_INET, "10.0.0.2", &local_ip) != 1){
+        perror("ERR: Could not initialize ARP IP\n");
+        return -1;
+    }
+    arp_initial = 1;
+    return 0;
+}
+
+int arp_handle(void *buf, int len){
+    arp_pkt *packet;
+    arp_pkt reply;
+    if(!arp_initial || buf==NULL) return -1;
+    if(len < (int)sizeof(arp_pkt)) return 0;
+    packet = buf;
+
+    // 不是ARP包
+    if(ntohs(packet->eth.type) != ETH_P_ARP) return 0;
+    // 不是以太网 + IPv4 ARP
+    if(ntohs(packet->arp.hwtype) != ARP_ETHERNET) return 0;
+    if(ntohs(packet->arp.protype) != ETH_P_IP) return 0;
+    // 暂时只处理ARP REQUEST
+    if(ntohs(packet->arp.opcode) != ARP_REQUEST) return 0;
+    // 暂时只请求本机IP
+    if(packet->arp.tip != local_ip) return 0;
+
+    memset(&reply, 0, sizeof(reply));
+    // 以太网帧头部
+    memcpy(reply.eth.dst, packet->arp.smac,ETH_ALEN);
+    memcpy(reply.eth.src, local_mac,ETH_ALEN);
+    reply.eth.type = htons(ETH_P_ARP);
+    // ARP头部
+    reply.arp.hwtype = htons(ARP_ETHERNET);
+    reply.arp.protype = htons(ETH_P_IP);
+    reply.arp.hwsize = ETH_ALEN;
+    reply.arp.prosize = 4;
+    reply.arp.opcode = htons(ARP_REPLY);
+    memcpy(reply.arp.smac, local_mac, ETH_ALEN);
+    reply.arp.sip = local_ip;
+    memcpy(reply.arp.tmac, packet->arp.smac, ETH_ALEN);
+    reply.arp.tip = packet->arp.sip;
+
+    if(tun_write(&reply, sizeof(reply)) < 0){
+        perror("ERR: Could not write ARP reply\n");
+        return -1;
+    }
+    return 0;
+}
+
+int arp_free(){
+    arp_initial = 0;
+    local_ip = 0;
+    return 0;
+}
