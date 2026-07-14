@@ -52,29 +52,15 @@ static unsigned char local_mac[6] = {
 int arp_init(){
     if(arp_initial) return 0;
     if(inet_pton(AF_INET, "10.0.0.2", &local_ip) != 1){
-        perror("ERR: Could not initialize ARP IP\n");
+        perror("ERR: Could not initialize ARP IP");
         return -1;
     }
     arp_initial = 1;
     return 0;
 }
 
-int arp_handle(void *buf, int len){
-    arp_pkt *packet;
+static int arp_reply(const arp_pkt *packet){
     arp_pkt reply;
-    if(!arp_initial || buf==NULL) return -1;
-    if(len < (int)sizeof(arp_pkt)) return 0;
-    packet = buf;
-
-    // 不是ARP包
-    if(ntohs(packet->eth.type) != ETH_P_ARP) return 0;
-    // 不是以太网 + IPv4 ARP
-    if(ntohs(packet->arp.hwtype) != ARP_ETHERNET) return 0;
-    if(ntohs(packet->arp.protype) != ETH_P_IP) return 0;
-    // 暂时只处理ARP REQUEST
-    if(ntohs(packet->arp.opcode) != ARP_REQUEST) return 0;
-    // 暂时只请求本机IP
-    if(packet->arp.tip != local_ip) return 0;
 
     memset(&reply, 0, sizeof(reply));
     // 以太网帧头部
@@ -87,14 +73,71 @@ int arp_handle(void *buf, int len){
     reply.arp.hwsize = ETH_ALEN;
     reply.arp.prosize = 4;
     reply.arp.opcode = htons(ARP_REPLY);
+    
     memcpy(reply.arp.smac, local_mac, ETH_ALEN);
     reply.arp.sip = local_ip;
     memcpy(reply.arp.tmac, packet->arp.smac, ETH_ALEN);
     reply.arp.tip = packet->arp.sip;
 
     if(tun_write(&reply, sizeof(reply)) < 0){
-        perror("ERR: Could not write ARP reply\n");
+        perror("ERR: Could not write ARP reply");
         return -1;
+    }
+    return 0;
+}
+
+int arp_request(uint32_t target_ip){
+    arp_pkt request;
+
+    memset(&request, 0, sizeof(request));
+    // 以太网头部
+    // 目标地址所有位全为1时 广播发送请求
+    memset(request.eth.dst, 0xff, ETH_ALEN);
+    memcpy(request.eth.src, local_mac, ETH_ALEN);
+    request.eth.type = htons(ETH_P_ARP);
+    // ARP头部
+    request.arp.hwtype = htons(ARP_ETHERNET);
+    request.arp.protype = htons(ETH_P_IP);
+    request.arp.hwsize = ETH_ALEN;
+    request.arp.prosize = 4;
+    request.arp.opcode = htons(ARP_REQUEST);
+
+    memcpy(request.arp.smac, local_mac, ETH_ALEN);
+    request.arp.sip = local_ip;
+    // 由于request清零 所以mac默认是00:00:00:00:00:00 不用赋值
+    request.arp.tip = target_ip;
+
+    if(tun_write(&request, sizeof(request)) < 0){
+        perror("ERR: Could not write ARP request");
+        return -1;
+    }
+    return 0;
+}
+
+int arp_handle(void *buf, int len){
+    arp_pkt *packet;
+    uint16_t opcode;
+    
+    if(!arp_initial || buf==NULL) return -1;
+    if(len < (int)sizeof(arp_pkt)) return 0;
+    packet = buf;
+    // 不是ARP包
+    if(ntohs(packet->eth.type) != ETH_P_ARP) return 0;
+    // 不是以太网 + IPv4 ARP
+    if(ntohs(packet->arp.hwtype) != ARP_ETHERNET) return 0;
+    if(ntohs(packet->arp.protype) != ETH_P_IP) return 0;
+    // hwsize 和 prosize 要符合要求
+    if(packet->arp.hwsize != ETH_ALEN) return 0;
+    if(packet->arp.prosize != 4) return 0;
+
+    opcode = ntohs(packet->arp.opcode);
+    if(opcode == ARP_REQUEST){
+        // 如果REQUEST请求不是本机的IP 则忽略
+        if(packet->arp.tip != local_ip) return 0;
+        return arp_reply(packet);
+    }else if(opcode == ARP_REPLY){
+        // 从packet中学习发送IP和发送mac的映射关系
+        return 0;
     }
     return 0;
 }

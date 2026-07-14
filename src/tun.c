@@ -17,7 +17,7 @@ static int tun_alloc(char *dev){
     int fd, err;
 
     if((fd = open("/dev/net/tun",O_RDWR)) < 0){
-        perror("Connot open TUN/TAP dev\n");
+        perror("Connot open TUN/TAP dev");
         exit(1);
     }
 
@@ -29,7 +29,7 @@ static int tun_alloc(char *dev){
     }
 
     if((err = ioctl(fd, TUNSETIFF, (void *)&ifr)) < 0){
-        perror("Could not ioctl tun\n");
+        perror("Could not ioctl tun");
         close(fd);
         exit(1);
     }
@@ -42,7 +42,7 @@ int tun_init(){
     if(tun_fd >= 0)
         return 0;
     if((dev = calloc(IFNAMSIZ, sizeof(char))) == NULL){
-        perror("ERR: Could not calloc dev\n");
+        perror("ERR: Could not calloc dev");
         return -1;
     }
     strncpy(dev, "tap0", IFNAMSIZ);
