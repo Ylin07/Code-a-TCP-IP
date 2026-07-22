@@ -18,11 +18,11 @@
 #define ARP_REPLY   2
 
 // 以太网帧头结构
-typedef struct{
-    unsigned char dst[ETH_ALEN];
-    unsigned char src[ETH_ALEN];
-    uint16_t type;  
-}__attribute__((packed)) eth_hdr;
+// typedef struct{
+//     unsigned char dst[ETH_ALEN];
+//     unsigned char src[ETH_ALEN];
+//     uint16_t type;  
+// }__attribute__((packed)) eth_hdr;
 
 // ARP报文结构
 typedef struct{
